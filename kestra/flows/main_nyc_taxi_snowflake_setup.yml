@@ -1,0 +1,50 @@
+id: snowflake_setup
+namespace: nyc_taxi
+description: |
+  Crea la infraestructura en Snowflake: warehouse, database, schemas
+  RAW/BRONZE/SILVER/GOLD, rol y usuario de la tubería, file format y stage.
+  Idempotente (IF NOT EXISTS): se puede ejecutar varias veces.
+  Usa credenciales de administrador (ACCOUNTADMIN).
+
+tasks:
+  - id: create_infra
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    # Snowflake JDBC: con transaction=true el plugin envía todo como 1 sentencia
+    transaction: false
+    connectionPooling: false
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_admin_user }}"
+    password: "{{ envs.snowflake_admin_password }}"
+    role: ACCOUNTADMIN
+    sql: |
+      CREATE WAREHOUSE IF NOT EXISTS {{ envs.snowflake_warehouse }}
+        WAREHOUSE_SIZE = 'XSMALL'
+        AUTO_SUSPEND = 60
+        AUTO_RESUME = TRUE
+        INITIALLY_SUSPENDED = TRUE;
+
+      CREATE DATABASE IF NOT EXISTS {{ envs.snowflake_database }};
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.RAW;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.BRONZE;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.SILVER;
+      CREATE SCHEMA IF NOT EXISTS {{ envs.snowflake_database }}.GOLD;
+
+      CREATE ROLE IF NOT EXISTS {{ envs.snowflake_role }};
+      GRANT USAGE, OPERATE ON WAREHOUSE {{ envs.snowflake_warehouse }} TO ROLE {{ envs.snowflake_role }};
+      GRANT USAGE, CREATE SCHEMA ON DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+      GRANT ALL ON ALL SCHEMAS IN DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+      GRANT ALL ON FUTURE TABLES IN DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+      GRANT ALL ON FUTURE VIEWS IN DATABASE {{ envs.snowflake_database }} TO ROLE {{ envs.snowflake_role }};
+
+      CREATE USER IF NOT EXISTS {{ envs.snowflake_user }}
+        PASSWORD = '{{ envs.snowflake_password }}'
+        DEFAULT_ROLE = {{ envs.snowflake_role }}
+        DEFAULT_WAREHOUSE = {{ envs.snowflake_warehouse }}
+        MUST_CHANGE_PASSWORD = FALSE;
+      GRANT ROLE {{ envs.snowflake_role }} TO USER {{ envs.snowflake_user }};
+
+      CREATE FILE FORMAT IF NOT EXISTS {{ envs.snowflake_database }}.RAW.PARQUET_FMT TYPE = PARQUET;
+      CREATE STAGE IF NOT EXISTS {{ envs.snowflake_database }}.RAW.TAXI_STAGE
+        FILE_FORMAT = {{ envs.snowflake_database }}.RAW.PARQUET_FMT;
+      GRANT USAGE ON FILE FORMAT {{ envs.snowflake_database }}.RAW.PARQUET_FMT TO ROLE {{ envs.snowflake_role }};
+      GRANT READ, WRITE ON STAGE {{ envs.snowflake_database }}.RAW.TAXI_STAGE TO ROLE {{ envs.snowflake_role }};

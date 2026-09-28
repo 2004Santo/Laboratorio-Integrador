@@ -1,0 +1,104 @@
+id: ingest_yellow_all
+namespace: nyc_taxi
+description: |
+  Ingesta completa: tabla de zonas + los 20 meses de Yellow Taxi (2025-01 a 2026-08).
+  Cada mes se carga con el subflow ingest_yellow_month.
+  Si un mes todavía no está publicado por TLC, ese mes queda en WARNING
+  y el resto continúa.
+
+inputs:
+  - id: months
+    type: ARRAY
+    itemType: STRING
+    defaults:
+      - "2025-01"
+      - "2025-02"
+      - "2025-03"
+      - "2025-04"
+      - "2025-05"
+      - "2025-06"
+      - "2025-07"
+      - "2025-08"
+      - "2025-09"
+      - "2025-10"
+      - "2025-11"
+      - "2025-12"
+      - "2026-01"
+      - "2026-02"
+      - "2026-03"
+      - "2026-04"
+      - "2026-05"
+      - "2026-06"
+      - "2026-07"
+      - "2026-08"
+
+tasks:
+  - id: download_zones
+    type: io.kestra.plugin.core.http.Download
+    uri: https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+
+  - id: upload_zones
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    from: "{{ outputs.download_zones.uri }}"
+    stageName: "@RAW.TAXI_STAGE"
+    prefix: zones
+    fileName: taxi_zone_lookup.csv
+    compress: false
+
+  - id: load_zones
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    # Snowflake JDBC: con transaction=true el plugin envía todo como 1 sentencia
+    transaction: false
+    connectionPooling: false
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    sql: |
+      CREATE OR REPLACE TABLE RAW.TAXI_ZONE_LOOKUP (
+        LOCATIONID    NUMBER,
+        BOROUGH       VARCHAR,
+        ZONE          VARCHAR,
+        SERVICE_ZONE  VARCHAR,
+        SOURCE_FILE   VARCHAR,
+        LOADED_AT     TIMESTAMP_LTZ
+      );
+
+      COPY INTO RAW.TAXI_ZONE_LOOKUP
+      FROM (
+        SELECT $1, $2, $3, $4, METADATA$FILENAME, CURRENT_TIMESTAMP()
+        FROM @RAW.TAXI_STAGE/zones/
+      )
+      FILES = ('taxi_zone_lookup.csv')
+      FILE_FORMAT = (TYPE = CSV SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"')
+      FORCE = TRUE;
+
+      REMOVE @RAW.TAXI_STAGE/zones/taxi_zone_lookup.csv;
+
+  - id: each_month
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ inputs.months }}"
+    concurrencyLimit: 2
+    tasks:
+      - id: ingest_month
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: nyc_taxi
+        flowId: ingest_yellow_month
+        inputs:
+          month: "{{ item.value }}"
+        wait: true
+        transmitFailed: true
+        allowFailure: true
+
+finally:
+  # Borra los archivos descargados del storage interno de Kestra (evita llenar el disco)
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles

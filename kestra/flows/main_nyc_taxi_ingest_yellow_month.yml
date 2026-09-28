@@ -1,0 +1,96 @@
+id: ingest_yellow_month
+namespace: nyc_taxi
+description: |
+  Ingesta de un mes de NYC Yellow Taxi desde la URL pública de TLC a Snowflake RAW.
+  1. Descarga el parquet del mes.
+  2. Lo sube al stage RAW.TAXI_STAGE.
+  3. Borra las filas previas de ese archivo y hace COPY INTO (idempotente:
+     re-ejecutar el mismo mes no genera duplicados).
+
+inputs:
+  - id: month
+    type: STRING
+    defaults: "2025-01"
+    description: Mes a cargar en formato YYYY-MM
+
+variables:
+  file: "yellow_tripdata_{{ inputs.month }}.parquet"
+  url: "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{{ inputs.month }}.parquet"
+
+tasks:
+  - id: download
+    type: io.kestra.plugin.core.http.Download
+    uri: "{{ render(vars.url) }}"
+
+  - id: upload_to_stage
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    from: "{{ outputs.download.uri }}"
+    stageName: "@RAW.TAXI_STAGE"
+    prefix: yellow
+    fileName: "{{ render(vars.file) }}"
+    compress: false
+
+  - id: load_raw
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    # Snowflake JDBC: con transaction=true el plugin envía todo como 1 sentencia
+    transaction: false
+    connectionPooling: false
+    url: "jdbc:snowflake://{{ envs.snowflake_account }}.snowflakecomputing.com/?MULTI_STATEMENT_COUNT=0"
+    username: "{{ envs.snowflake_user }}"
+    password: "{{ envs.snowflake_password }}"
+    role: "{{ envs.snowflake_role }}"
+    warehouse: "{{ envs.snowflake_warehouse }}"
+    database: "{{ envs.snowflake_database }}"
+    sql: |
+      CREATE TABLE IF NOT EXISTS RAW.YELLOW_TRIPDATA (
+        VENDORID               NUMBER,
+        TPEP_PICKUP_DATETIME   TIMESTAMP_NTZ,
+        TPEP_DROPOFF_DATETIME  TIMESTAMP_NTZ,
+        PASSENGER_COUNT        FLOAT,
+        TRIP_DISTANCE          FLOAT,
+        RATECODEID             FLOAT,
+        STORE_AND_FWD_FLAG     VARCHAR,
+        PULOCATIONID           NUMBER,
+        DOLOCATIONID           NUMBER,
+        PAYMENT_TYPE           NUMBER,
+        FARE_AMOUNT            FLOAT,
+        EXTRA                  FLOAT,
+        MTA_TAX                FLOAT,
+        TIP_AMOUNT             FLOAT,
+        TOLLS_AMOUNT           FLOAT,
+        IMPROVEMENT_SURCHARGE  FLOAT,
+        TOTAL_AMOUNT           FLOAT,
+        CONGESTION_SURCHARGE   FLOAT,
+        AIRPORT_FEE            FLOAT,
+        CBD_CONGESTION_FEE     FLOAT,
+        SOURCE_FILE            VARCHAR,
+        LOADED_AT              TIMESTAMP_LTZ
+      );
+
+      BEGIN;
+
+      DELETE FROM RAW.YELLOW_TRIPDATA
+      WHERE SOURCE_FILE LIKE '%{{ render(vars.file) }}';
+
+      COPY INTO RAW.YELLOW_TRIPDATA
+      FROM @RAW.TAXI_STAGE/yellow/
+      FILES = ('{{ render(vars.file) }}')
+      FILE_FORMAT = (TYPE = PARQUET USE_LOGICAL_TYPE = TRUE)
+      MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
+      INCLUDE_METADATA = (SOURCE_FILE = METADATA$FILENAME, LOADED_AT = METADATA$START_SCAN_TIME)
+      FORCE = TRUE;
+
+      COMMIT;
+
+      REMOVE @RAW.TAXI_STAGE/yellow/{{ render(vars.file) }};
+
+finally:
+  # Borra los archivos descargados del storage interno de Kestra (evita llenar el disco)
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
