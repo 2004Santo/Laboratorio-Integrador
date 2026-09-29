@@ -1,0 +1,59 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Datos originales cargados por Kestra (flows ingest_yellow_month / ingest_yellow_all).
+    schema: RAW
+    tables:
+      - name: yellow_tripdata
+        identifier: YELLOW_TRIPDATA
+        description: >
+          Viajes de NYC Yellow Taxi tal como vienen en los parquet de TLC,
+          más SOURCE_FILE (archivo de origen) y LOADED_AT (momento del COPY INTO).
+        columns:
+          - name: source_file
+            tests:
+              - not_null
+          - name: loaded_at
+            tests:
+              - not_null
+
+      - name: taxi_zone_lookup
+        identifier: TAXI_ZONE_LOOKUP
+        description: Catálogo de zonas de taxi de TLC (taxi_zone_lookup.csv).
+
+models:
+  - name: brz_yellow_tripdata
+    description: >
+      Viajes de Yellow Taxi sin transformar (mismas columnas y tipos que RAW).
+      Solo agrega metadata de linaje. Grano: una fila por registro del parquet de origen.
+    columns:
+      - name: source_file
+        description: Nombre del parquet de origen (ej. yellow_tripdata_2025-01.parquet).
+        tests:
+          - not_null
+      - name: source_period
+        description: Período (YYYY-MM) del archivo de origen.
+        tests:
+          - not_null
+      - name: loaded_at
+        description: Momento en que el archivo se cargó a RAW (COPY INTO).
+        tests:
+          - not_null
+      - name: bronze_loaded_at
+        description: Momento en que dbt escribió la fila en Bronze.
+
+  - name: brz_taxi_zones
+    description: Catálogo de zonas de TLC sin transformar, más metadata de linaje.
+    columns:
+      - name: locationid
+        description: ID de la zona (clave natural).
+        tests:
+          - not_null
+          - unique
+      - name: source_file
+        tests:
+          - not_null
+      - name: loaded_at
+        tests:
+          - not_null

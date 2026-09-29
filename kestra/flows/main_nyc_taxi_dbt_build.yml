@@ -1,0 +1,34 @@
+id: dbt_build
+namespace: nyc_taxi
+description: |
+  Transformaciones con dbt: Bronze -> Silver -> Gold + tests.
+  Lo llama ingest_yellow_all como último paso (también se puede lanzar a mano).
+  El proyecto dbt se monta en el contenedor de Kestra en /app/dbt (ver docker-compose.yml).
+  Idempotente: Bronze/Silver son incrementales por archivo y Gold se reconstruye completo.
+
+tasks:
+  - id: dbt
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: copy_project
+        type: io.kestra.plugin.scripts.shell.Commands
+        # corre dentro del contenedor de Kestra, donde está montado /app/dbt
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - cp -r /app/dbt/. .
+          - rm -rf target dbt_packages logs .user.yml
+
+      - id: dbt_build
+        type: io.kestra.plugin.dbt.cli.DbtCLI
+        containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
+        env:
+          SNOWFLAKE_ACCOUNT: "{{ envs.snowflake_account }}"
+          SNOWFLAKE_USER: "{{ envs.snowflake_user }}"
+          SNOWFLAKE_PASSWORD: "{{ envs.snowflake_password }}"
+          SNOWFLAKE_ROLE: "{{ envs.snowflake_role }}"
+          SNOWFLAKE_WAREHOUSE: "{{ envs.snowflake_warehouse }}"
+          SNOWFLAKE_DATABASE: "{{ envs.snowflake_database }}"
+        commands:
+          - dbt deps --profiles-dir .
+          - dbt build --profiles-dir .

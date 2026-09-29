@@ -4,7 +4,7 @@ description: |
   Ingesta completa: tabla de zonas + los 20 meses de Yellow Taxi (2025-01 a 2026-08).
   Cada mes se carga con el subflow ingest_yellow_month.
   Si un mes todavía no está publicado por TLC, ese mes queda en WARNING
-  y el resto continúa.
+  y el resto continúa. Al final corre dbt (flow dbt_build).
 
 inputs:
   - id: months
@@ -97,6 +97,14 @@ tasks:
         wait: true
         transmitFailed: true
         allowFailure: true
+
+  # Transformaciones Bronze -> Silver -> Gold con dbt
+  - id: run_dbt
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: nyc_taxi
+    flowId: dbt_build
+    wait: true
+    transmitFailed: true
 
 finally:
   # Borra los archivos descargados del storage interno de Kestra (evita llenar el disco)

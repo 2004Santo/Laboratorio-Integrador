@@ -1,0 +1,153 @@
+version: 2
+
+# Esquema estrella para analizar los viajes.
+#
+#                  dim_date (x2: pickup / dropoff)
+#                        |
+#   dim_vendor ---- fct_trips ---- dim_location (x2: pickup / dropoff)
+#                   /   |   \
+#   dim_payment_type  dim_time  dim_rate_code
+#
+# Primary keys: las dimensiones usan como PK el código natural de TLC (vendor, pago,
+# tarifa, zona) porque es estable y único; fecha usa YYYYMMDD y hora 0-23.
+
+models:
+  - name: fct_trips
+    description: >
+      Tabla de hechos de viajes. Grano: un viaje de Yellow Taxi por fila
+      (cada viaje válido de Silver). Métricas aditivas: pasajeros, distancia,
+      duración y todos los montos en USD.
+    columns:
+      - name: trip_id
+        description: PK. Hash de los atributos del viaje (generado en Silver).
+        data_tests:
+          - unique
+          - not_null
+      - name: pickup_date_key
+        description: FK a dim_date (fecha de inicio del viaje).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: dropoff_date_key
+        description: FK a dim_date (fecha de fin del viaje).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: pickup_time_key
+        description: FK a dim_time (hora de inicio del viaje).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_time')
+                field: time_key
+      - name: pickup_location_key
+        description: FK a dim_location (zona de inicio).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_location')
+                field: location_key
+      - name: dropoff_location_key
+        description: FK a dim_location (zona de destino).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_location')
+                field: location_key
+      - name: vendor_key
+        description: FK a dim_vendor.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_vendor')
+                field: vendor_key
+      - name: payment_type_key
+        description: FK a dim_payment_type.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_payment_type')
+                field: payment_type_key
+      - name: rate_code_key
+        description: FK a dim_rate_code.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_rate_code')
+                field: rate_code_key
+      - name: passenger_count
+        description: Métrica. Pasajeros del viaje (NULL si no se reportó).
+      - name: trip_distance_miles
+        description: Métrica. Distancia en millas.
+      - name: trip_duration_minutes
+        description: Métrica. Duración en minutos.
+      - name: total_amount
+        description: Métrica. Monto total cobrado en USD.
+        data_tests:
+          - not_null
+
+  - name: dim_date
+    description: Calendario. Un día por fila (2025-01-01 a 2026-12-31).
+    columns:
+      - name: date_key
+        description: PK con formato YYYYMMDD.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_time
+    description: Hora del día. Una fila por hora (0-23), con período del día y hora pico.
+    columns:
+      - name: time_key
+        description: PK. Hora 0-23.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_location
+    description: Zonas de taxi de TLC (265), con distrito, zona de servicio y si es aeropuerto.
+    columns:
+      - name: location_key
+        description: PK. LocationID de TLC.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_vendor
+    description: Proveedor del taxímetro que registró el viaje.
+    columns:
+      - name: vendor_key
+        description: PK. VendorID de TLC.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_payment_type
+    description: Forma de pago del viaje.
+    columns:
+      - name: payment_type_key
+        description: PK. payment_type de TLC.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_rate_code
+    description: Tipo de tarifa aplicada al viaje.
+    columns:
+      - name: rate_code_key
+        description: PK. RatecodeID de TLC (99 = desconocido).
+        data_tests:
+          - unique
+          - not_null

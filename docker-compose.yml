@@ -29,6 +29,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/kestra-wd:/tmp/kestra-wd
       - ./kestra/flows:/app/flows:ro
+      - ./dbt:/app/dbt:ro
     environment:
       ENV_SNOWFLAKE_ADMIN_USER: ${SNOWFLAKE_ADMIN_USER}
       ENV_SNOWFLAKE_ADMIN_PASSWORD: ${SNOWFLAKE_ADMIN_PASSWORD}

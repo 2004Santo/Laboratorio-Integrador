@@ -1,0 +1,114 @@
+version: 2
+
+models:
+  - name: slv_yellow_tripdata
+    description: |
+      Viajes de Yellow Taxi limpios y estandarizados. Grano: un viaje por fila.
+      Conteos medidos sobre Bronze (75,089,241 filas, 2025-01 a 2026-07).
+
+      **Tipos de datos**
+      - passenger_count y ratecodeid llegan como FLOAT -> INT; montos y distancia -> NUMBER(10,2)
+        (evita errores de redondeo de FLOAT al sumar dinero).
+
+      **Nombres y formatos**
+      - Columnas en snake_case con sufijo de unidad/rol (_id, _amount, _miles).
+      - store_and_fwd_flag 'Y'/'N' -> booleano is_store_and_forward.
+
+      **Valores nulos** (18,407,401 viajes = 24.5%, todos con payment_type 0 = "Flex Fare")
+      - No se descartan: son viajes reales con precio cerrado; eliminarlos sesgaría el análisis.
+      - passenger_count nulo se deja NULL (imputar un promedio inventaría pasajeros).
+      - ratecodeid nulo -> 99, el código que TLC define como "Null/unknown" (ya había 1,497,132 con 99).
+      - Recargos nulos (congestion_surcharge, airport_fee, etc.) -> 0: no se cobraron.
+      - passenger_count = 0 (343,943) o > 6 (170) -> NULL: imposible en un yellow taxi.
+
+      **Registros inválidos** (se excluyen)
+      - Pickup fuera del mes del archivo (345): TLC incluye algunos viajes de otros meses;
+        además garantiza que un viaje solo pueda venir de un archivo.
+      - Dropoff antes del pickup (2,242) o duración > 24 h (572): error de reloj del taxímetro.
+      - Distancia > 200 millas (2,889): valores de hasta 397,994 millas en 18 minutos.
+      - total_amount < 0 (1,121,063): son anulaciones/reversos de cobros, no viajes.
+        fare_amount negativo con total >= 0 (1,879,991, casi todos Flex Fare) se conserva.
+      - total_amount > 1,000 USD (124): outliers imposibles para un viaje urbano.
+
+      **Se conservan** (válidos aunque parezcan raros)
+      - Distancia 0 (2,236,130): 2,144,863 tienen cobro y 1,610,007 cambian de zona, así que
+        son viajes reales con falla del GPS/odómetro, no viajes inexistentes.
+      - total_amount = 0: payment_type 3 ("No charge") es legítimo.
+
+      **Duplicados**
+      - trip_id = hash de vendor, pickup, dropoff, zonas, distancia, tarifa, total y tipo de pago.
+        Si se repite, se queda la fila cargada más recientemente.
+
+      **Re-ejecución**: incremental por archivo (delete+insert sobre source_file). Si Kestra
+      recarga un mes, sus filas se reemplazan en vez de duplicarse.
+    columns:
+      - name: trip_id
+        description: Clave surrogada del viaje (hash de sus atributos).
+        data_tests:
+          - unique
+          - not_null
+      - name: vendor_id
+        description: "Proveedor del taxímetro: 1 Creative Mobile, 2 Curb, 6 Myle, 7 Helix."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 6, 7]
+                quote: false
+      - name: pickup_datetime
+        data_tests:
+          - not_null
+      - name: dropoff_datetime
+        data_tests:
+          - not_null
+      - name: pickup_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('slv_taxi_zones')
+                field: location_id
+      - name: dropoff_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('slv_taxi_zones')
+                field: location_id
+      - name: passenger_count
+        description: Pasajeros (1-6). NULL si no se reportó o el valor era imposible.
+      - name: rate_code_id
+        description: "1 Standard, 2 JFK, 3 Newark, 4 Nassau/Westchester, 5 Negotiated, 6 Group ride, 99 Unknown."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 99]
+                quote: false
+      - name: payment_type_id
+        description: "0 Flex Fare, 1 Credit card, 2 Cash, 3 No charge, 4 Dispute, 5 Unknown, 6 Voided."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1, 2, 3, 4, 5, 6]
+                quote: false
+      - name: total_amount
+        data_tests:
+          - not_null
+      - name: source_file
+        data_tests:
+          - not_null
+
+  - name: slv_taxi_zones
+    description: >
+      Catálogo de zonas estandarizado. 'N/A', vacío o nulo -> 'Unknown' en borough, zone y
+      service_zone (TLC usa 'N/A' y 'Unknown' indistintamente en las zonas 264 y 265).
+    columns:
+      - name: location_id
+        data_tests:
+          - unique
+          - not_null
+      - name: borough
+        data_tests:
+          - not_null
