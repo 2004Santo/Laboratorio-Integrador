@@ -16,7 +16,9 @@ TLC (parquet/csv) ──Kestra──▶ Snowflake RAW ──dbt──▶ BRONZE 
 
 ## Cómo ejecutar
 
-1. Completar el archivo `.env` (credenciales de Postgres, Kestra y Snowflake).
+1. Copiar `.env.example` como `.env` y completar las credenciales. Solo se necesita una cuenta de
+   Snowflake y un usuario con rol `ACCOUNTADMIN`; el usuario, rol, warehouse y base de la tubería
+   los crea el flow `snowflake_setup`.
 2. Levantar la infraestructura:
    ```bash
    docker compose up -d
@@ -27,6 +29,11 @@ TLC (parquet/csv) ──Kestra──▶ Snowflake RAW ──dbt──▶ BRONZE 
    1. `nyc_taxi.snowflake_setup`: crea warehouse, base, schemas, rol, usuario y stage (una sola vez).
    2. `nyc_taxi.ingest_yellow_all`: carga las zonas y los 20 meses a `RAW`, y al terminar
       llama a `nyc_taxi.dbt_build`, que construye Bronze, Silver y Gold y corre los tests.
+
+> Si el usuario administrador de Snowflake tiene MFA activado, `snowflake_setup` no puede
+> iniciar sesión solo con contraseña. En ese caso, copiar el SQL de
+> `kestra/flows/main_nyc_taxi_snowflake_setup.yml` a una hoja de Snowsight, reemplazar los
+> `{{ envs.* }}` por los valores del `.env` y ejecutarlo; luego seguir con `ingest_yellow_all`.
 
 Para cargar un solo mes: `nyc_taxi.ingest_yellow_month` (input `month = YYYY-MM`).
 Para correr solo las transformaciones: `nyc_taxi.dbt_build`.

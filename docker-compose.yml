@@ -19,8 +19,8 @@ services:
       retries: 10
 
   kestra:
-    image: kestra/kestra:latest
-    pull_policy: always
+    # versión fija: la tubería está probada con Kestra 2.0.3
+    image: kestra/kestra:v2.0.3
     restart: unless-stopped
     user: "root"
     command: server standalone
